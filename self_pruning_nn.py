@@ -75,7 +75,7 @@ class PrunableLinear(nn.Module):
             nn.init.uniform_(self.bias, -bound, bound)
 
         # Small positive init so gates start slightly above 0.5
-        nn.init.constant_(self.gate_scores, 0.1)
+        nn.init.constant_(self.gate_scores, -1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Step 1: turn gate_scores into values in (0, 1)
@@ -169,7 +169,7 @@ class SelfPruningNet(nn.Module):
         total = torch.tensor(0.0, device=next(self.parameters()).device)
         for layer in self.prunable_layers():
             gates = torch.sigmoid(layer.gate_scores)   # keep in computation graph
-            total = total + gates.abs().sum()
+            total = total + gates.abs().mean()
         return total
 
     def overall_sparsity(self, threshold: float = 1e-2) -> float:
@@ -289,7 +289,12 @@ def train_and_evaluate(lam: float,
     model = SelfPruningNet(dropout=0.3).to(device)
 
     # Adam updates both weights and gate_scores simultaneously
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    gate_params   = [p for n, p in model.named_parameters() if 'gate_scores' in n]
+    weight_params = [p for n, p in model.named_parameters() if 'gate_scores' not in n]
+    optimizer = optim.Adam([
+        {'params': weight_params, 'lr': lr,        'weight_decay': 1e-4},
+        {'params': gate_params,   'lr': lr * 50},
+    ])
 
     # Cosine annealing smoothly decays lr to near-zero
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -404,8 +409,8 @@ def plot_training_curves(results: list, save_path: str = "training_curves.png"):
 
 def main():
     # ── Config ────────────────────────────────────────────────────────────────
-    LAMBDAS    = [1e-5, 1e-4, 1e-3]   # low / medium / high sparsity pressure
-    EPOCHS     = 40
+    LAMBDAS    = [2.0, 10.0, 30.0]   # low / medium / high sparsity pressure
+    EPOCHS     = 50
     BATCH_SIZE = 256
     LR         = 3e-3
 
